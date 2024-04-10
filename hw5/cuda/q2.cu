@@ -38,7 +38,14 @@ __global__ void compute(int *arrayA, int size, int *min, int *arrayB) {
         arrayB[tid] = arrayA[tid] % 10;
 }
 
-int main() {
+int main(int argc, char **argv) {
+    // Implement your solution for question 2. The input file is inp.txt
+    // and contains an array A.
+    // Running this program should output two files:
+    //  (1) q2a.txt which contains the minimum value in the input array
+    //  (2) q2b.txt which contains an array B (in the same format as inp.txt)
+    //      where B[i] = the last digit of A[i]
+
     FILE *inputFile = fopen("inp.txt", "r");
     if (inputFile == NULL) {
         printf("Error opening inp.txt\n");
