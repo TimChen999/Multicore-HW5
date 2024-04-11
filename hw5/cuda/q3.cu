@@ -31,6 +31,75 @@ __global__ void computeShared(int *arrayA, int size, int *arrayB) {
     }
 }
 
+__global__ void computeC(int *arrayB, int *arrayC, int N) {
+    // Get C from B
+    int tid = threadIdx.x;
+
+    // Compute array C using array B
+    arrayC[tid] = arrayB[tid+1];
+    if(tid == 9){
+        arrayC[tid] = N;
+    }
+}
+
+__global__ void inclusiveScan(int *input, int *output, int size) {
+    extern __shared__ int temp[];
+
+    int tid = threadIdx.x;
+    int offset = 1;
+
+    // Load input data into shared memory
+    int index = 2 * blockIdx.x * blockDim.x + tid;
+    if (index < size) {
+        temp[tid] = input[index];
+    } else {
+        temp[tid] = 0;  // Pad with zeros if out of bounds
+    }
+    if (index + blockDim.x < size) {
+        temp[tid + blockDim.x] = input[index + blockDim.x];
+    } else {
+        temp[tid + blockDim.x] = 0;  // Pad with zeros if out of bounds
+    }
+
+    // Perform reduction phase
+    for (int d = blockDim.x; d > 0; d >>= 1) {
+        __syncthreads();
+        if (tid < d) {
+            int ai = offset * (2 * tid + 1) - 1;
+            int bi = offset * (2 * tid + 2) - 1;
+            temp[bi] += temp[ai];
+        }
+        offset *= 2;
+    }
+
+    // Clear the last element to zero
+    if (tid == 0) {
+        temp[blockDim.x * 2 - 1] = 0;
+    }
+
+    // Perform down-sweep phase
+    for (int d = 1; d < blockDim.x * 2; d *= 2) {
+        offset >>= 1;
+        __syncthreads();
+        if (tid < d) {
+            int ai = offset * (2 * tid + 1) - 1;
+            int bi = offset * (2 * tid + 2) - 1;
+            int t = temp[ai];
+            temp[ai] = temp[bi];
+            temp[bi] += t;
+        }
+    }
+
+    // Write the results to output array
+    __syncthreads();
+    if (index < size) {
+        output[index] = temp[tid];
+    }
+    if (index + blockDim.x < size) {
+        output[index + blockDim.x] = temp[tid + blockDim.x];
+    }
+}
+
 int main(int argc, char **argv) {
     FILE *inputFile = fopen("inp.txt", "r");
     if (inputFile == NULL) {
@@ -79,7 +148,7 @@ int main(int argc, char **argv) {
     fclose(outputFile);
 
     // part B
-    memset(arrayB, 0, 80);
+    memset(arrayB, 0, sizeof(arrayB));
 
     cudaMalloc(&d_arrayA, sizeof(int) * size);
     cudaMalloc(&d_arrayB, sizeof(int) * 10);
@@ -106,6 +175,39 @@ int main(int argc, char **argv) {
         }
     }
     fclose(outputFileB);
+
+    // part C
+
+    int arrayC[10];
+    int *d_arrayC;
+
+    cudaMalloc(&d_arrayB, sizeof(int) * 10);
+    cudaMalloc(&d_arrayC, sizeof(int) * 10);
+
+    cudaMemcpy(d_arrayB, arrayB, sizeof(int) * 10, cudaMemcpyHostToDevice);
+
+    inclusiveScan<<<1, THREADS_PER_BLOCK, sizeof(int) * THREADS_PER_BLOCK * 2>>>(d_arrayB, d_arrayC, 10);
+
+    computeC<<<1, 10>>>(d_arrayC, d_arrayC, size);
+
+    cudaMemcpy(arrayC, d_arrayC, sizeof(int) * 10, cudaMemcpyDeviceToHost);
+
+    FILE *outputFileC = fopen("q3c.txt", "w");
+    if (outputFileC == NULL) {
+        printf("Error opening q3c.txt\n");
+        return 1;
+    }
+    for (int i = 0; i < 10; i++) {
+        fprintf(outputFileC, "%d", arrayC[i]);
+        if (i < 9){
+            fprintf(outputFileC, ", ");
+        }
+    }
+    fclose(outputFileC);
+    
+    cudaFree(d_arrayB);
+    cudaFree(d_arrayC);
+
 
     return 0;
 }
