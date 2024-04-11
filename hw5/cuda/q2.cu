@@ -2,40 +2,35 @@
 
 #define THREADS_PER_BLOCK 256
 
-__global__ void compute(int *arrayA, int size, int *min, int *arrayB) {
-    extern __shared__ int sdata[];
+__global__ void compute(int *A, int size, int *minA, int *B) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-    int tid = threadIdx.x + blockIdx.x * blockDim.x;
-    int idx = threadIdx.x;
+    // Shared memory
+    __shared__ int s_minA;
 
-    // Copy data to shared memory
-    if (tid < size)
-        sdata[idx] = arrayA[tid];
-    else
-        sdata[idx] = INT_MAX;  // Set to maximum integer value for threads without data
-
-    __syncthreads();
-
-    // Use reduction technique to find the minimum value
-    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-        if (idx < stride) {
-            if (sdata[idx + stride] < sdata[idx]) {
-                sdata[idx] = sdata[idx + stride];
-            }
+    // Compute minA
+    if (tid < size) {
+        if (threadIdx.x == 0) {
+            s_minA = A[tid];
         }
         __syncthreads();
+
+        for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+            if (threadIdx.x < s && (tid + s) < size) {
+                s_minA = min(s_minA, A[tid + s]);
+            }
+            __syncthreads();
+        }
     }
 
-    // Write the minimum value to global memory
-    if (idx == 0) {
-        min[blockIdx.x] = sdata[0];
+    if (threadIdx.x == 0) {
+        atomicMin(minA, s_minA);
     }
 
-    __syncthreads();
-
-    // Compute the last digit of each element in array A and store it in array B
-    if (tid < size)
-        arrayB[tid] = arrayA[tid] % 10;
+    // Compute array B
+    if (tid < size) {
+        B[tid] = A[tid] % 10;
+    }
 }
 
 int main(int argc, char **argv) {
@@ -52,41 +47,40 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    int arrayA[10000]; 
+    int arrayA[100000]; 
     int size = 0;
     int value;
     while (fscanf(inputFile, "%d,", &value) != EOF) {
         arrayA[size++] = value;
     }
+    printf("%d",size);
+
     fclose(inputFile);
 
-    int *d_arrayA;
-    int *d_min;
-    int *d_arrayB;
-    int *h_min = (int*)malloc(sizeof(int) * (size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK);
-    int arrayB[10000]; 
+    // Allocate memory on the device
+    int *d_A, *d_B, *d_minA;
+    cudaMalloc(&d_A, size * sizeof(int));
+    cudaMalloc(&d_B, size * sizeof(int));
+    cudaMalloc(&d_minA, sizeof(int));
 
-    cudaMalloc(&d_arrayA, sizeof(int) * size);
-    cudaMalloc(&d_min, sizeof(int) * (size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK);
-    cudaMalloc(&d_arrayB, sizeof(int) * size);
+    // Copy input array from host to device
+    cudaMemcpy(d_A, arrayA, size * sizeof(int), cudaMemcpyHostToDevice);
 
-    cudaMemcpy(d_arrayA, arrayA, sizeof(int) * size, cudaMemcpyHostToDevice);
+    // Initialize minA
+    int initialMin = 1000;
+    cudaMemcpy(d_minA, &initialMin, sizeof(int), cudaMemcpyHostToDevice);
 
-    compute<<<(size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK, THREADS_PER_BLOCK * sizeof(int)>>>(d_arrayA, size, d_min, d_arrayB);
+    // Launch the kernel to compute minA and generate array B
+    int numBlocks = (size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    compute<<<numBlocks, THREADS_PER_BLOCK>>>(d_A, size, d_minA, d_B);
 
-    cudaMemcpy(h_min, d_min, sizeof(int) * (size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, cudaMemcpyDeviceToHost);
-    cudaMemcpy(arrayB, d_arrayB, sizeof(int) * size, cudaMemcpyDeviceToHost);
+    // Copy minA from device to host
+    int minA;
+    cudaMemcpy(&minA, d_minA, sizeof(int), cudaMemcpyDeviceToHost);
 
-    cudaFree(d_arrayA);
-    cudaFree(d_min);
-    cudaFree(d_arrayB);
-
-    int minA = h_min[0];
-    for (int i = 1; i < (size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK; i++) {
-        if (h_min[i] < minA) {
-            minA = h_min[i];
-        }
-    }
+    // Copy array B from device to host
+    int arrayB[100000];
+    cudaMemcpy(arrayB, d_B, size * sizeof(int), cudaMemcpyDeviceToHost);
 
     FILE *outputFileA = fopen("q2a.txt", "w");
     if (outputFileA == NULL) {
@@ -104,12 +98,13 @@ int main(int argc, char **argv) {
     for (int i = 0; i < size; i++) {
         fprintf(outputFileB, "%d", arrayB[i]);
         if (i != size - 1) {
-            fprintf(outputFileB, ", "); // Add a comma if it's not the last value
+            fprintf(outputFileB, ", ");
         }
     }
     fclose(outputFileB);
 
-    free(h_min);
-
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_minA);
     return 0;
 }
