@@ -3,9 +3,9 @@
 #define THREADS_PER_BLOCK 256
 
 __global__ void compute(int *A, int size, int *minA, int *B) {
-    __shared__ int sdata[THREADS_PER_BLOCK]; 
+    extern __shared__ int sdata[]; 
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int local_minA = 1000;
+    // int local_minA = 1000;
 
     // Load element into shared memory
     if (tid < size) {
@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
     //  (2) q2b.txt which contains an array B (in the same format as inp.txt)
     //      where B[i] = the last digit of A[i]
 
-    FILE *inputFile = fopen("inp2.txt", "r");
+    FILE *inputFile = fopen("inp.txt", "r");
     if (inputFile == NULL) {
         printf("Error opening inp.txt\n");
         return 1;
