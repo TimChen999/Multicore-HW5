@@ -3,28 +3,29 @@
 #define THREADS_PER_BLOCK 256
 
 __global__ void compute(int *A, int size, int *minA, int *B) {
+    __shared__ int sdata[THREADS_PER_BLOCK]; 
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int local_minA = 1000;
 
-    // Shared memory
-    __shared__ int s_minA;
-
-    // Compute minA
+    // Load element into shared memory
     if (tid < size) {
-        if (threadIdx.x == 0) {
-            s_minA = A[tid];
+        sdata[threadIdx.x] = A[tid];
+    } else {
+        sdata[threadIdx.x] = 1000; 
+    }
+    __syncthreads();
+
+    // Perform parallel reduction to compute minA
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (threadIdx.x < s) {
+            sdata[threadIdx.x] = min(sdata[threadIdx.x], sdata[threadIdx.x + s]);
         }
         __syncthreads();
-
-        for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-            if (threadIdx.x < s && (tid + s) < size) {
-                s_minA = min(s_minA, A[tid + s]);
-            }
-            __syncthreads();
-        }
     }
 
+    // Write block's minA to global memory
     if (threadIdx.x == 0) {
-        atomicMin(minA, s_minA);
+        atomicMin(minA, sdata[0]);
     }
 
     // Compute array B
@@ -41,7 +42,7 @@ int main(int argc, char **argv) {
     //  (2) q2b.txt which contains an array B (in the same format as inp.txt)
     //      where B[i] = the last digit of A[i]
 
-    FILE *inputFile = fopen("inp.txt", "r");
+    FILE *inputFile = fopen("inp2.txt", "r");
     if (inputFile == NULL) {
         printf("Error opening inp.txt\n");
         return 1;
@@ -53,7 +54,6 @@ int main(int argc, char **argv) {
     while (fscanf(inputFile, "%d,", &value) != EOF) {
         arrayA[size++] = value;
     }
-    printf("%d",size);
 
     fclose(inputFile);
 
